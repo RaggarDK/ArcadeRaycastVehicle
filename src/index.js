@@ -285,6 +285,10 @@ const init = async () => {
 	engine.runRenderLoop(()=>{
 		scene.render()
 	})
+	
+	window.addEventListener("resize", () => {
+		engine.resize();
+	})
 }
 
 init()
