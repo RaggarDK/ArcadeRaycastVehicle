@@ -23,27 +23,30 @@ class RaycastVehicle{
 		this.predictionRatio = 0.6
         this.nWheelsOnGround = 0
 		this.speed = 0
-		this.axles = [
-			{
-				wheelA:0,
-				wheelB:1,
-				force:10000
-			},
-			{
-				wheelA:2,
-				wheelB:3,
-				force:10000
-			}
-		]
+		this.antiRollAxles = []
     }
 
     addWheel(wheel){
         this.wheels.push(wheel)
     }
 	
+	removeWheel(wheel, index){
+		if(index) this.wheels.splice(index, 1)
+		this.wheels.splice(this.wheels.indexOf(wheel), 1)
+	}
+	
+	addAntiRollAxle(axle){
+		this.antiRollAxles.push(axle)
+	}
+	
+	removeAntiRollAxle(axle, index){
+		if(index) this.antiRollAxles.splice(index, 1)
+		this.antiRollAxles.splice(this.antiRollAxles.indexOf(axle), 1)
+	}
+	
 	updateWheelTransform(wheel){
 		Vector3.TransformCoordinatesToRef(wheel.positionLocal, this.body.transformNode.getWorldMatrix(), wheel.positionWorld)
-        Vector3.TransformNormalToRef(wheel.suspensionAxisLocal, this.body.transformNode.getWorldMatrix(), wheel.wheelDirectionWorld)
+        Vector3.TransformNormalToRef(wheel.suspensionAxisLocal, this.body.transformNode.getWorldMatrix(), wheel.suspensionAxisWorld)
 	}
 	
 	updateVehicleSpeed(){
@@ -59,7 +62,7 @@ class RaycastVehicle{
 	}
 	
 	updateWheelRaycast(wheel){
-		tmp1.copyFrom(wheel.wheelDirectionWorld).scaleInPlace(wheel.compressionRestDistance).addInPlace(wheel.positionWorld)
+		tmp1.copyFrom(wheel.suspensionAxisWorld).scaleInPlace(wheel.suspensionRestLength).addInPlace(wheel.positionWorld)
 		const rayStart = wheel.positionWorld
 		const rayEnd = tmp1
 		this.physicsEngine.raycastToRef(rayStart, rayEnd, raycastResult)
@@ -76,23 +79,23 @@ class RaycastVehicle{
 	
 	updateWheelSuspension(wheel){
 		if(!wheel.inContact){
-			wheel.prevCompression = wheel.compressionDistance
-			wheel.hitDistance = wheel.compressionRestDistance
+			wheel.prevSuspensionLength = wheel.suspensionLength
+			wheel.hitDistance = wheel.suspensionRestLength
 			return
 		}
 	  
 		let force = 0.0
-		wheel.compressionDistance = wheel.compressionRestDistance - wheel.hitDistance
-		wheel.compressionDistance = clampNumber(wheel.compressionDistance, 0, wheel.compressionRestDistance);
-		const compressionRatio = wheel.compressionDistance / wheel.compressionRestDistance;
+		wheel.suspensionLength = wheel.suspensionRestLength - wheel.hitDistance
+		wheel.suspensionLength = clampNumber(wheel.suspensionLength, 0, wheel.suspensionRestLength);
+		const compressionRatio = wheel.suspensionLength / wheel.suspensionRestLength;
 
-		const compressionForce = 15000 * compressionRatio;
+		const compressionForce = wheel.suspensionForce * compressionRatio;
 		force += compressionForce;
 
-		const rate = (wheel.prevCompression - wheel.compressionDistance) / this.scene.getPhysicsEngine().getTimeStep()
-		wheel.prevCompression = wheel.compressionDistance;
+		const rate = (wheel.prevSuspensionLength - wheel.suspensionLength) / this.scene.getPhysicsEngine().getTimeStep()
+		wheel.prevSuspensionLength = wheel.suspensionLength;
 
-		const dampingForce = rate * 15000 * 0.15;
+		const dampingForce = rate * wheel.suspensionForce * wheel.suspensionDamping
 		force -= dampingForce;
 
 		const suspensionForce = Vector3.TransformNormalToRef(wheel.suspensionAxisLocal.negateToRef(tmp1), this.body.transformNode.getWorldMatrix(), tmp1).scaleInPlace(force)
@@ -108,10 +111,10 @@ class RaycastVehicle{
 		const tireWorldVel = getBodyVelocityAtPoint(this.body, wheel.positionWorld)
 		const steeringDir = Vector3.TransformNormalToRef(wheel.axleAxisLocal, wheel.transform.getWorldMatrix(), tmp1)
 		const steeringVel = Vector3.Dot(steeringDir, tireWorldVel)
-		const desiredVelChange = -steeringVel * 1
+		const desiredVelChange = -steeringVel
 		const desiredAccel = desiredVelChange / this.scene.getPhysicsEngine().getTimeStep()
 		this.body.applyForce(
-			steeringDir.scaleInPlace(40 * desiredAccel), 
+			steeringDir.scaleInPlace(wheel.sideForce * desiredAccel), 
 			Vector3.LerpToRef(wheel.hitPoint, wheel.positionWorld, wheel.sideForcePositionRatio, tmp2)
 		)
 	}
@@ -120,12 +123,12 @@ class RaycastVehicle{
 		if(!wheel.inContact) return
 		if(wheel.force !== 0){
 			const forwardDirectionWorld = Vector3.TransformNormalToRef(wheel.forwardAxisLocal, wheel.transform.getWorldMatrix(), tmp1).scaleInPlace(wheel.force)
-			this.body.applyForce(forwardDirectionWorld, tmp2.copyFrom(wheel.hitPoint).addInPlace(new Vector3(0,-0.8,.1)))
+			this.body.applyForce(forwardDirectionWorld, tmp2.copyFrom(wheel.hitPoint))
 		}
 	}
 	
 	updateWheelRotation(wheel){
-		wheel.rotation += this.speed*0.1*wheel.radius
+		wheel.rotation += this.speed*wheel.rotationMultiplier*wheel.radius
 		Quaternion.RotationAxisToRef(wheel.axleAxisLocal, wheel.rotation, tmpq1)
 		wheel.transform.rotationQuaternion.multiplyToRef(tmpq1, wheel.transform.rotationQuaternion)
 		wheel.transform.rotationQuaternion.normalize()
@@ -133,7 +136,7 @@ class RaycastVehicle{
 	
 	updateWheelTransformPosition(wheel){
 		wheel.transform.position.copyFrom(wheel.positionWorld)
-		wheel.transform.position.addInPlace(wheel.wheelDirectionWorld.scale(wheel.hitDistance-wheel.radius))
+		wheel.transform.position.addInPlace(wheel.suspensionAxisWorld.scale(wheel.hitDistance-wheel.radius))
 	}
 	
 	updateVehiclePredictiveLanding(){
@@ -187,22 +190,22 @@ class RaycastVehicle{
 		
 		this.updateVehiclePredictiveLanding()
 		
-		this.axles.forEach(axle => {
+		this.antiRollAxles.forEach(axle => {
 			const wheelA = this.wheels[axle.wheelA]
 			const wheelB = this.wheels[axle.wheelB]
 			if(!wheelA || !wheelB) return
 			if(!wheelA.inContact && !wheelB.inContact) return
-			const wheelOrder = wheelA.compressionDistance <= wheelB.compressionDistance ? [wheelA, wheelB] : [wheelB, wheelA]
-			const maxCompressionRestLength = (wheelA.compressionRestDistance+wheelB.compressionRestDistance)/2
-			const compressionDifference = wheelOrder[1].compressionDistance-wheelOrder[0].compressionDistance
+			const wheelOrder = wheelA.suspensionLength <= wheelB.suspensionLength ? [wheelA, wheelB] : [wheelB, wheelA]
+			const maxCompressionRestLength = (wheelA.suspensionRestLength+wheelB.suspensionRestLength)/2
+			const compressionDifference = wheelOrder[1].suspensionLength-wheelOrder[0].suspensionLength
 			const compressionRatio = Math.min(compressionDifference,maxCompressionRestLength)/maxCompressionRestLength
 			
-			const antiRollForce = tmp1.copyFrom(wheelOrder[0].wheelDirectionWorld).scaleInPlace(axle.force*compressionRatio)
+			const antiRollForce = tmp1.copyFrom(wheelOrder[0].suspensionAxisWorld).scaleInPlace(axle.force*compressionRatio)
 			this.body.applyForce(
                 antiRollForce, 
                 wheelOrder[0].positionWorld
             )
-			antiRollForce.copyFrom(wheelOrder[1].wheelDirectionWorld).negateInPlace().scaleInPlace(axle.force*compressionRatio)
+			antiRollForce.copyFrom(wheelOrder[1].suspensionAxisWorld).negateInPlace().scaleInPlace(axle.force*compressionRatio)
 			this.body.applyForce(
                 antiRollForce, 
                 wheelOrder[1].positionWorld

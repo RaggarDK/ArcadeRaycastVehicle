@@ -48,7 +48,9 @@ const init = async () => {
 	const hdrTexture = CubeTexture.CreateFromPrefilteredData('environmentSpecular.env', scene);
 	scene.environmentTexture = hdrTexture;
 	
-	const animations = await Animation.CreateFromSnippetAsync('1CG7SN#3')
+	//ACE snippetID 1CG7SN#5
+	//const animations = await Animation.CreateFromSnippetAsync('1CG7SN#5')
+	const animations = await Animation.ParseFromFileAsync("Vehicle", "curves/acceleration.json")
     const accelerationCurve = animations[0]
     const skidCurve = animations[1]
 
@@ -57,7 +59,6 @@ const init = async () => {
 	
 	const vehicleContainer = await SceneLoader.LoadAssetContainerAsync('./models/', 'vehicleNS.gltf', scene)
 	const vehicleFiles = vehicleContainer.instantiateModelsToScene(name => name, true)
-	console.log(vehicleFiles)
 	const vehicleMesh = vehicleFiles.rootNodes[0].getChildren()[0]
 	vehicleMesh.scaling.set(1.2,1.2,1.2)
 	const wheelMesh = vehicleFiles.rootNodes[0].getChildren()[1]
@@ -72,14 +73,41 @@ const init = async () => {
 	const levelRootNode = levelFiles.rootNodes[0]
 	levelRootNode.scaling.set(.3,.3,.3)
 	levelRootNode.computeWorldMatrix(true)
-	levelRootNode.getChildren().forEach(child => {
-		child.computeWorldMatrix(true)
-			const childPhysicsShape = new PhysicsShapeMesh(
-			child,   // mesh from which to calculate the collisions
-			scene   // scene of the shape
-		);
-		const childPhysicsBody = new PhysicsBody(child, PhysicsMotionType.STATIC, false, scene);
-		childPhysicsBody.shape = childPhysicsShape
+	
+	const getMeshesByNameIncluded = (meshes, names) => {
+		const result = []
+		meshes.forEach(mesh => {
+			names.forEach(name => {
+				if(mesh.name.includes(name)) result.push(mesh)
+			})
+		})
+		return result
+	}
+	const levelChildren = levelRootNode.getChildren()
+	const staticGeom = getMeshesByNameIncluded(levelChildren, ['ground', 'side', 'pipe', 'ramp', 'rail', 'platform'])
+	staticGeom.forEach(mesh => {
+		mesh.computeWorldMatrix(true)
+		const meshPhysicsShape = new PhysicsShapeMesh(
+			mesh,
+			scene
+		)
+		const meshPhysicsBody = new PhysicsBody(mesh, PhysicsMotionType.STATIC, false, scene);
+		meshPhysicsBody.shape = meshPhysicsShape
+		meshPhysicsShape.filterMembershipMask = 1
+	})
+	const dynamicGeom = getMeshesByNameIncluded(levelChildren, ['barrel', 'Box', 'cone'])
+	dynamicGeom.forEach(mesh => {
+		mesh.computeWorldMatrix(true)
+		const meshPhysicsShape = new PhysicsShapeConvexHull(
+			mesh,
+			scene
+		)
+		const meshPhysicsBody = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, true, scene);
+		meshPhysicsBody.shape = meshPhysicsShape
+		meshPhysicsBody.setMassProperties({
+			mass: 10
+		})
+		meshPhysicsShape.filterMembershipMask = 1
 	})
 	
 	
@@ -100,6 +128,7 @@ const init = async () => {
     chassisPhysicsBody.setMassProperties({
 		centerOfMass: new Vector3(0, -0.5, 0)
     })
+	chassisPhysicsShape.filterMembershipMask = 2
 	
 	const followCamera = new FollowCamera("FollowCam", new Vector3(-6, 0, 0), scene)
     followCamera.heightOffset = 1
@@ -111,45 +140,37 @@ const init = async () => {
 	scene.activeCamera = followCamera
 	
 	const vehicle = new RaycastVehicle(chassisPhysicsBody, scene)
+	vehicle.numberOfFramesToPredict = 60//Number of frames to predict future upwards orientation if airborne
+	vehicle.predictionRatio = 0.8//[0-1]How quickly to correct angular velocity towards future orientation. 0 = disabled
 	
-	const wheelpositionLocal = new Vector3(0.49, 0, -0.7)
-    
-    const suspensionRelaxation = 0.025
-    const suspensionStrength = 8000
-	const suspensionDamping = 0.9
+	const wheelConfig = {
+		positionLocal:new Vector3(0.49, 0, -0.7),//Local connection point on the chassis
+		suspensionRestLength:0.6, //Rest length when suspension is fully decompressed
+		suspensionForce:15000, //Max force to apply to the suspension/spring 
+		suspensionDamping:0.15, //[0-1] Damper force in percentage of suspensionForce
+		suspensionAxisLocal:new Vector3(0,-1,0),//Direction of the spring
+		axleAxisLocal:new Vector3(1,0,0),//Axis the wheel spins around
+		forwardAxisLocal:new Vector3(0,0,1),//Forward direction of the wheel
+		sideForcePositionRatio:0.1,//[0-1]0 = wheel position, 1 = connection point 
+		sideForce:40,//Force applied to counter wheel drifting
+		radius:0.2,
+		rotationMultiplier:0.1//How fast to spin the wheel
+	}
 
-	vehicle.addWheel(new RaycastWheel({
-		positionLocal:wheelpositionLocal,
-		suspensionLength:0.6,
-		suspensionStrength:suspensionStrength,
-		suspensionDamping:suspensionDamping,
-		suspensionRelaxation:suspensionRelaxation
-	}))
+	vehicle.addWheel(new RaycastWheel(wheelConfig))//Right rear
 
-	wheelpositionLocal.set(-0.49, 0, -0.7)
-	vehicle.addWheel(new RaycastWheel({
-		positionLocal:wheelpositionLocal,
-		suspensionLength:0.6,
-		suspensionStrength:suspensionStrength,
-		suspensionDamping:suspensionDamping,
-		suspensionRelaxation:suspensionRelaxation
-	}))
-	wheelpositionLocal.set(-0.49, 0, 0.8)
-	vehicle.addWheel(new RaycastWheel({
-		positionLocal:wheelpositionLocal,
-		suspensionLength:0.6,
-		suspensionStrength:suspensionStrength,
-		suspensionDamping:suspensionDamping,
-		suspensionRelaxation:suspensionRelaxation
-	}))
-	wheelpositionLocal.set(0.49, 0, 0.8)
-	vehicle.addWheel(new RaycastWheel({
-		positionLocal:wheelpositionLocal,
-		suspensionLength:0.6,
-		suspensionStrength:suspensionStrength,
-		suspensionDamping:suspensionDamping,
-		suspensionRelaxation:suspensionRelaxation
-	}))
+	wheelConfig.positionLocal.set(-0.49, 0, -0.7)//Left rear
+	vehicle.addWheel(new RaycastWheel(wheelConfig))
+	
+	wheelConfig.positionLocal.set(-0.49, 0, 0.8)
+	vehicle.addWheel(new RaycastWheel(wheelConfig))//Left front
+	
+	wheelConfig.positionLocal.set(0.49, 0, 0.8)
+	vehicle.addWheel(new RaycastWheel(wheelConfig))//Right front
+	
+	//Attempt at some anti rolling
+	vehicle.addAntiRollAxle({wheelA:0,wheelB:1,force:10000}) // right rear - left rear
+	vehicle.addAntiRollAxle({wheelA:2,wheelB:3,force:10000}) // left front - right rear
 	
 	
 	const wheelMeshes = [wheelMesh.createInstance(0),wheelMesh.createInstance(1),wheelMesh.createInstance(2),wheelMesh.createInstance(3)]
@@ -191,43 +212,55 @@ const init = async () => {
 			break
 		}
     })
-		
+	
+	const maxVehicleSpeed = 60
+	const maxVehicleForce = 2200
+	const numberOfGears = 5	
+	const maxSteerValue = 0.6 
+    const steeringIncrement = 0.005
+    const steerRecover = 0.05
 	let currentGear = 0	
 	let vehicleAirborne = false
 	let steering = 0
     let force = 0
+	let forwardForce = 0
+    let steerValue = 0
+    let steerDirection = 0
+   
+
+    
+	
 	revSound.play()
 	scene.onBeforeRenderObservable.add(()=>{
-		if(controls.left){
-			steering -= 0.009
-		} else if(controls.right) {
-			steering += 0.009
-		} else {
-			steering *= 0.95
-		}
-		if(steering > 1) steering = 1
-		if(steering < -1) steering = -1
-		vehicle.wheels[2].steering = steering
-		vehicle.wheels[3].steering = steering
+		forwardForce = 0
+        steerDirection = 0
+		if(controls.forward) forwardForce = 1
+        if(controls.backward) forwardForce = -1
+        if(controls.left) steerDirection = -1
+        if(controls.right) steerDirection = 1
+      
+        steerValue += steerDirection*steeringIncrement
+        steerValue = Math.min(Math.max(steerValue, -maxSteerValue), maxSteerValue)
+        steerValue *= 1-(1-Math.abs(steerDirection))*steerRecover
+		vehicle.wheels[2].steering = steerValue
+		vehicle.wheels[3].steering = steerValue
 
-		if(controls.forward) {
-			force += 0.02
-		} else if(controls.backward){
-			force += -0.02
-		} else {
-			force *= 0.95
-		}
-		if(force > 1) force = 1
-		if(force < -1) force = -1
 		
-		let speed = Math.abs(vehicle.speed)
-        speed = Math.min(speed, 50)
-        const prog = (speed/50)*100
+		const speed = Math.min(Math.abs(vehicle.speed), maxVehicleSpeed)
+        const prog = (speed/maxVehicleSpeed)*100
         const acceleration = accelerationCurve.evaluate(prog)
-        const force2 = acceleration*force*4600
+        const force2 = acceleration*forwardForce*maxVehicleForce
 		
 		vehicle.wheels[2].force = force2
 		vehicle.wheels[3].force = force2
+		
+		/*
+		const slip = skidCurve.evaluate(prog)
+        const slipForce = 40-(slip*10)
+		
+		vehicle.wheels[0].sideForce = slipForce
+		vehicle.wheels[1].sideForce = slipForce
+		*/
 
 		vehicle.update()
 		
@@ -238,17 +271,14 @@ const init = async () => {
 			wheelMesh.rotationQuaternion.copyFrom(wheel.transform.rotationQuaternion)
 			if(index == 0 || index == 3) wheelMesh.rotate(Axis.Y, Math.PI, Space.LOCAL)
 		})
-		const maxSpeed = 50
-		const numberOfGears = 4
-		const maxSpeedSound = Math.min(Math.abs(vehicle.speed), 50)
-		const gearProgression = maxSpeedSound/(maxSpeed/numberOfGears) % maxSpeed
+		const maxSpeedSound = Math.min(Math.abs(vehicle.speed), maxVehicleSpeed)
+		const gearProgression = maxSpeedSound/(maxVehicleSpeed/numberOfGears) % maxVehicleSpeed
 		const currentGearNumber = Math.floor(gearProgression)
 		const gearRatio = gearProgression-currentGearNumber
 		revSound.setPlaybackRate((currentGearNumber/numberOfGears)+1.2*gearRatio)
 		if(currentGear !== currentGearNumber){
 			currentGear = currentGearNumber
 			shiftSound.play()
-			console.log("Shift")
 		}
 	})
 

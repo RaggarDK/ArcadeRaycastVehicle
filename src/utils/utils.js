@@ -11,5 +11,5 @@ const getBodyVelocityAtPoint = (body, point) => {
 }
 
 const clampNumber = (num, a, b) => Math.max(Math.min(num, Math.max(a, b)), Math.min(a, b));
-
-export { getBodyVelocityAtPoint, clampNumber }
+const lerp = (x, y, a) => x * (1 - a) + y * a;
+export { getBodyVelocityAtPoint, clampNumber, lerp }
