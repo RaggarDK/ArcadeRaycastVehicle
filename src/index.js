@@ -250,9 +250,9 @@ const init = async () => {
         const prog = (speed/maxVehicleSpeed)*100
         const acceleration = accelerationCurve.evaluate(prog)
         const force2 = acceleration*forwardForce*maxVehicleForce
-		
-		vehicle.wheels[2].force = force2
-		vehicle.wheels[3].force = force2
+		const brakeForceMultiplier = Math.sign(vehicle.speed) !== Math.sign(force2) ? 2 : 1
+		vehicle.wheels[2].force = force2*brakeForceMultiplier
+		vehicle.wheels[3].force = force2*brakeForceMultiplier
 		
 		/*
 		const slip = skidCurve.evaluate(prog)
